@@ -1,0 +1,66 @@
+name: Publish public demo (manual only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_publication:
+        description: "공개 코드·합성 데모의 실제 사이트 게시를 승인합니다"
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-pages
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      inputs.confirm_publication
+    permissions:
+      contents: read
+    uses: ./.github/workflows/check.yml
+
+  build:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: site
+          name: github-pages
+          retention-days: 1
+
+  deploy:
+    needs: build
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      inputs.confirm_publication && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+        with:
+          enablement: false
+      - name: Publish reviewed public static files
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+        with:
+          artifact_name: github-pages

@@ -1,0 +1,16 @@
+# Local inputs and secrets must never enter this public repository.
+*.csv
+*.tsv
+*.xlsx
+*.xls
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+private/
+reports/
+node_modules/
+test-results/
+playwright-report/

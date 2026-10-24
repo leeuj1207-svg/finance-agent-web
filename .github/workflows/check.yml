@@ -1,0 +1,114 @@
+name: Check public static site
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Verify reviewed public files and synthetic analysis
+        run: |
+          git ls-files -z > "$RUNNER_TEMP/public-files"
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFile, readdir, lstat } from 'node:fs/promises';
+          import { createHash } from 'node:crypto';
+          // Release allowlist: update only after explicitly reviewing the new public bytes.
+          const approved = {".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "app.js": "9a1d4e8fdec2596f9f846310d2d8e7fd17670a3cb01a8a59d21fdfb02708ab8f", "core.js": "c56777d00ffde1c72261e0125f3a7edd6939aba652e84294797d8260abad1cf7", "data.js": "12682b11cdf33dc2b6aa1b6978b46041619a567f1a780c3e6a22a91523c9f9e8", "icon.svg": "ebbdb33478cd87e8efdad445902b96db4ed5d1b06516db13b746b4961e30500d", "index.html": "1eb385b733bd72b272cd832c74c36d4ecf3796252ad045399f8f4cbc887ab49a", "styles.css": "8260623329602332b25e4d9cb6c25db55bc2816fa57ee37837b91e42aa52ce7f"};
+          assert.deepEqual((await readdir('site')).sort(), Object.keys(approved).sort());
+          const expectedFiles = [...Object.keys(approved).map(name => `site/${name}`), '.gitignore', 'README.md', '.github/workflows/check.yml', '.github/workflows/pages.yml'].sort();
+          assert.deepEqual((await readFile(`${process.env.RUNNER_TEMP}/public-files`, 'utf8')).split('\0').filter(Boolean).sort(), expectedFiles, 'Only the approved public inventory may be tracked');
+          assert.equal((await lstat('site')).isSymbolicLink(), false);
+          for (const [name, sha256] of Object.entries(approved)) {
+            const entry = await lstat(`site/${name}`);
+            assert.ok(entry.isFile() && !entry.isSymbolicLink(), 'Public assets must be regular files');
+            assert.equal(createHash('sha256').update(await readFile(`site/${name}`)).digest('hex'), sha256, 'Public asset differs from its reviewed release');
+          }
+          const html = await readFile('site/index.html', 'utf8');
+          for (const policy of ["connect-src 'none'", "form-action 'none'", "script-src 'self'"])
+            assert.ok(html.includes(policy), 'Browser privacy policy must be retained');
+          const { planReport, monthlyReview, parsePurchases, parseExpenses, summarizeExpenses } = await import('./site/core.js');
+          const { DEMO_PURCHASES, DEMO_EXPENSES } = await import('./site/data.js');
+          assert.equal(planReport('2026-01').total.target_amount, '1260000.00');
+          const review = monthlyReview(parsePurchases(DEMO_PURCHASES), '2026-01');
+          assert.equal(review.total.purchased_amount, '1180000.00');
+          assert.equal(review.total.reserved_amount, '80000.00');
+          assert.equal(review.total.remaining_amount, '0.00');
+          assert.equal(summarizeExpenses(parseExpenses(DEMO_EXPENSES), '2026-01').total_expenses, '131900.00');
+          console.log('Seven reviewed static files and synthetic analysis verified.');
+          JS
+      - name: Install temporary browser test tools (not published)
+        run: |
+          npm install --prefix "$RUNNER_TEMP/browser-tools" --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          "$RUNNER_TEMP/browser-tools/node_modules/.bin/playwright" install --with-deps chromium webkit
+      - name: Test the export in mobile Chromium and iPhone WebKit
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { createServer } from 'node:http';
+          import { readFile } from 'node:fs/promises';
+          import { once } from 'node:events';
+          import { createRequire } from 'node:module';
+          import { join } from 'node:path';
+          import { DEMO_PURCHASES, DEMO_EXPENSES } from './site/data.js';
+          const require = createRequire(import.meta.url);
+          const { chromium, webkit, devices } = require(join(process.env.RUNNER_TEMP, 'browser-tools/node_modules/playwright'));
+          const prefix = '/finance-agent-web/';
+          const files = new Map(['index.html','styles.css','app.js','core.js','data.js','icon.svg'].map(name => [prefix + name, name]));
+          files.set(prefix, 'index.html');
+          const mime = { html:'text/html', css:'text/css', js:'text/javascript', svg:'image/svg+xml' };
+          const server = createServer(async (request, response) => {
+            if (!['GET','HEAD'].includes(request.method)) { response.writeHead(405); response.end(); return; }
+            const name = files.get(new URL(request.url, 'http://internal').pathname);
+            if (!name) { response.writeHead(404); response.end(); return; }
+            response.writeHead(200, { 'Content-Type': mime[name.split('.').pop()] + '; charset=utf-8', 'Cache-Control':'no-store' });
+            response.end(request.method === 'HEAD' ? undefined : await readFile(`site/${name}`));
+          });
+          server.listen(0, '127.0.0.1'); await once(server, 'listening');
+          try {
+            for (const [engine, device] of [[chromium, devices['Pixel 7']], [webkit, devices['iPhone 13']]]) {
+              const browser = await engine.launch();
+              try {
+                const context = await browser.newContext(device);
+                const page = await context.newPage();
+                const errors = []; page.on('pageerror', () => errors.push('pageerror'));
+                await page.goto(`http://127.0.0.1:${server.address().port}${prefix}`);
+                await page.waitForFunction(() => document.querySelector('#overview').textContent.includes('1,260,000원'));
+                await page.waitForLoadState('networkidle');
+                const requests = []; page.on('request', () => requests.push('request'));
+                await context.setOffline(true);
+                await page.getByRole('button', {name:/합성 데모로/}).click();
+                assert.ok((await page.locator('#overview').innerText()).includes('131,900원'));
+                await page.getByRole('button', {name:'투자 계획·결산',exact:true}).click();
+                await page.locator('#purchases-file').setInputFiles({name:'synthetic.csv',mimeType:'text/csv',buffer:Buffer.from(DEMO_PURCHASES)});
+                await page.waitForFunction(() => document.querySelector('#purchases-state').textContent.includes('선택 월 18건'));
+                assert.ok((await page.locator('#investment-cards').innerText()).includes('1,180,000원'));
+                assert.ok((await page.locator('#investment-cards').innerText()).includes('80,000원'));
+                await page.getByRole('button', {name:'지출 분석',exact:true}).click();
+                await page.locator('#expenses-file').setInputFiles({name:'synthetic.csv',mimeType:'text/csv',buffer:Buffer.from('\ufeff' + DEMO_EXPENSES)});
+                await page.waitForFunction(() => document.querySelector('#expenses-state').textContent.includes('선택 월 9건'));
+                assert.ok((await page.locator('#expense-cards').innerText()).includes('131,900원'));
+                assert.deepEqual(requests, [], 'File selection and analysis must not transmit data');
+                assert.deepEqual(errors, []);
+                assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+                await page.getByRole('button', {name:'기록 지우기',exact:true}).click();
+                assert.equal(await page.locator('#expenses-state').innerText(), '아직 기록을 선택하지 않았습니다.');
+                await context.close();
+              } finally { await browser.close(); }
+            }
+          } finally { await new Promise(resolve => server.close(resolve)); }
+          console.log('Both mobile browser exports passed; no screenshots, traces or financial records saved.');
+          JS

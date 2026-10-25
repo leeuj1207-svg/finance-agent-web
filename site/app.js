@@ -1,11 +1,15 @@
 import { AnalysisError, MAX_BYTES, validMonth, parsePurchases, monthlyReview, planReport,
   parseExpenses, summarizeExpenses } from './core.js';
 import { DEMO_PURCHASES, DEMO_EXPENSES } from './data.js';
+import { initLocal } from './local.js';
+import { purchaseRow, expenseRow } from './records.js';
 
 const $ = id => document.getElementById(id);
 const state = { purchases: null, expenses: null, purchaseSource: '', expenseSource: '' };
 const revision = { purchases: 0, expenses: 0 };
 const monthInput = $('month');
+let localUI;
+const sourceLabel = source => source === 'demo' ? '합성 데모' : source === 'saved' ? '기기 내 저장 기록' : '로컬 CSV';
 const now = new Date();
 monthInput.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 const error = message => { $('error').textContent = message; $('error').hidden = !message; };
@@ -47,6 +51,7 @@ function investmentRows(group, hasData, symbols = false) {
 }
 const headers = ['구분', '월 목표', '매수 실적', '현금성 적립', '차이', '미집행 매수', '적립 부족'];
 function render() {
+  localUI?.render();
   let month;
   try { month = validMonth(monthInput.value); }
   catch { error('분석할 월을 YYYY-MM 형식으로 선택해 주세요.'); for (const id of ['overview', 'investment-cards', 'expense-cards', 'account-table', 'symbol-table', 'asset-table', 'category-table', 'account-details', 'schedule']) $(id).replaceChildren(); return; }
@@ -54,14 +59,14 @@ function render() {
   const investment = state.purchases === null ? plan : monthlyReview(state.purchases, month);
   const expense = state.expenses === null ? null : summarizeExpenses(state.expenses, month);
   const hasPurchases = state.purchases !== null;
-  $('data-mode').textContent = [state.purchaseSource, state.expenseSource].some(s => s === 'local') ? '로컬 기록' : state.purchaseSource || state.expenseSource ? '합성 데모' : '기록 선택 전';
+  $('data-mode').textContent = [state.purchaseSource, state.expenseSource].some(s => s === 'saved') ? '기기 내 저장 기록' : [state.purchaseSource, state.expenseSource].some(s => s === 'local') ? '로컬 기록' : state.purchaseSource || state.expenseSource ? '합성 데모' : '기록 선택 전';
   cards('overview', [
     ['월 투자·적립 목표', krw(plan.total.target_amount), '매수 118만 원 + 적립 8만 원'],
-    ['이번 달 투자·적립', hasPurchases ? krw(investment.total.actual_amount) : '—', hasPurchases ? `${investment.transaction_count}건 · ${state.purchaseSource === 'demo' ? '합성 데이터' : '로컬 CSV'}` : '투자 CSV를 선택해 주세요'],
-    ['이번 달 지출', expense ? krw(expense.total_expenses) : '—', expense ? `${expense.transaction_count}건 · ${state.expenseSource === 'demo' ? '합성 데이터' : '로컬 CSV'}` : '지출 CSV를 선택해 주세요'],
+    ['이번 달 투자·적립', hasPurchases ? krw(investment.total.actual_amount) : '—', hasPurchases ? `${investment.transaction_count}건 · ${sourceLabel(state.purchaseSource)}` : '투자 CSV를 선택해 주세요'],
+    ['이번 달 지출', expense ? krw(expense.total_expenses) : '—', expense ? `${expense.transaction_count}건 · ${sourceLabel(state.expenseSource)}` : '지출 CSV를 선택해 주세요'],
   ]);
   $('schedule').textContent = `기본 예정일 ${plan.schedule.base_dates.join(' / ')} · 휴장일 조정 미지원. 실제 영업일은 별도로 확인해 주세요.`;
-  $('purchases-state').textContent = hasPurchases ? `${state.purchaseSource === 'demo' ? '합성 데모' : '로컬 CSV'} · 선택 월 ${investment.transaction_count}건${investment.unclassified_transaction_count ? ` · 미분류 ${investment.unclassified_transaction_count}건` : ''}` : '아직 기록을 선택하지 않았습니다. 아래에는 목표만 표시합니다.';
+  $('purchases-state').textContent = hasPurchases ? `${sourceLabel(state.purchaseSource)} · 선택 월 ${investment.transaction_count}건${investment.unclassified_transaction_count ? ` · 미분류 ${investment.unclassified_transaction_count}건` : ''}` : '아직 기록을 선택하지 않았습니다. 아래에는 목표만 표시합니다.';
   cards('investment-cards', [
     ['월 목표', krw(plan.total.target_amount), '계좌·종목별 합계'],
     ['상품 매수', hasPurchases ? krw(investment.total.purchased_amount) : '—', '현금성 적립 제외'],
@@ -77,7 +82,7 @@ function render() {
     const details = document.createElement('details'); details.append(text('summary', account.name));
     const content = document.createElement('div'); table(content, `${account.name} 종목별 결산`, headers, investmentRows(account.by_symbol, hasPurchases, true)); details.append(content); return details;
   }));
-  $('expenses-state').textContent = expense ? `${state.expenseSource === 'demo' ? '합성 데모' : '로컬 CSV'} · 선택 월 ${expense.transaction_count}건` : '아직 기록을 선택하지 않았습니다.';
+  $('expenses-state').textContent = expense ? `${sourceLabel(state.expenseSource)} · 선택 월 ${expense.transaction_count}건` : '아직 기록을 선택하지 않았습니다.';
   cards('expense-cards', [
     ['이번 달 총지출', expense ? krw(expense.total_expenses) : '—', expense ? '선택한 월의 지출만 집계' : '지출 CSV를 선택해 주세요'],
     ['거래 건수', expense ? `${expense.transaction_count}건` : '—', '동일 금액도 별도 거래'],
@@ -132,3 +137,14 @@ for (const button of document.querySelectorAll('[data-view]')) button.addEventLi
   for (const view of document.querySelectorAll('.view')) view.hidden = view.id !== button.dataset.view;
 });
 render();
+
+function useSaved(records) {
+  revision.purchases++; revision.expenses++;
+  state.purchases = records.filter(r => r.type === 'investment').map(purchaseRow);
+  state.expenses = records.filter(r => r.type === 'expense').map(expenseRow);
+  state.purchaseSource = state.expenseSource = 'saved'; render();
+}
+localUI = initLocal({ monthInput, krw, onUse: useSaved,
+  onLoad: records => { if (!revision.purchases && !revision.expenses) useSaved(records); },
+  onError: message => { error(message); if (message) { $('error').tabIndex = -1; $('error').focus(); } },
+});

@@ -73,3 +73,22 @@ footer { margin-top:42px; padding-top:22px; border-top:1px solid var(--line); te
 @media(min-width:750px) { .intro br:first-of-type { display:none; } .upload { display:grid; grid-template-columns:1fr auto; column-gap:24px; align-items:center; } .upload>p { grid-column:1/-1; margin:6px 0; } }
 @media(max-width:540px) { main { padding-left:18px; padding-right:18px; } .brand { padding-left:18px; padding-right:18px; } .brand a { font-size:17px; } .local-badge { font-size:10px; padding:6px; } .cards { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; } .cards .card:first-child { grid-column:1/-1; } .card { padding:18px 15px; } .card:first-child .value { font-size:32px; } .guide { flex-direction:column; gap:0; } .guide ol { margin:0; } .toolbar { align-items:flex-start; } .toolbar-actions { width:100%; } .primary { flex:1; } .panel { padding:20px 15px; } h2 { font-size:19px; } }
 @media(prefers-reduced-motion:no-preference) { button { transition:background .15s; } .primary:hover { background:#104b3b; } }
+/* Native date controls and 16px inputs avoid iPhone's focus zoom. */
+.tabs { grid-template-columns:repeat(2,minmax(0,1fr)); }
+fieldset { border:1px solid var(--line); border-radius:12px; padding:12px; min-width:0; margin:14px 0; }
+legend { font-size:14px; font-weight:650; }
+textarea,.entry-form input { font:inherit; font-size:16px; color:var(--ink); background:white; border:1px solid #9aafa1; border-radius:8px; padding:10px; min-height:48px; width:100%; min-width:0; max-width:100%; }
+.entry-form label { margin-top:16px; }
+.entry-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; }
+.saved-record { border-bottom:1px solid var(--line); padding:14px 0; overflow-wrap:anywhere; }
+.saved-record p { line-height:1.8; margin:4px 0; }
+.saved-record button { margin:6px 8px 0 0; }
+.radio-label { display:flex; gap:10px; align-items:center; min-height:48px; font-size:14px; line-height:1.7; }
+.radio-label input { min-width:24px; min-height:24px; }
+#backup-link { display:block; padding:14px 0; min-height:48px; overflow-wrap:anywhere; }
+#restore-summary { overflow-wrap:anywhere; line-height:1.8; }
+
+/* Native select shadow styles conflict with WebKit CSP; use touch radio choices. */
+.choice-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
+.entry-form .choice-label { display:flex; align-items:center; gap:8px; min-height:48px; margin:0; font-size:14px; }
+.entry-form input[type=radio] { width:24px; min-height:44px; padding:0; margin:0; flex:none; }
